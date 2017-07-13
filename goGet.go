@@ -8,7 +8,9 @@ import (
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/fatih/color"
 	"os"
+	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -21,7 +23,9 @@ type State struct {
 	OutputFile     *os.File /* the output file handler */
 	Threads        int      /* the number of threads to use */
 	MutateFileName string   /* the mutation file name */
+	TestFileName   string   /* the test file to upload */
 	DomainName     string   /* the name of the domain */
+	KeywordList    string   /* list of keywords */
 	Buckets        int      /* the number of buckets read */
 }
 
@@ -78,19 +82,33 @@ func checkBucket(s *State, bucket string, resultChan chan<- Result, region strin
 				if foundRegion != "no_region_found" {
 					checkBucket(s, bucket, resultChan, foundRegion)
 				} else {
-					fmt.Printf("* {checkBucket} got 'no_region_found' on bucket %s", bucket)
+					fmt.Printf("* {checkBucket} got 'no_region_found' on bucket %s\n", bucket)
 				}
 				/* case "RequestLimitExceeded":
 				   fmt.Println("rate limit exceeded")*/
 			case "AccessDenied":
 				r.Listable = false
+				checkWritable(&r, s)
 				resultChan <- r
 			default:
 				fmt.Printf("[%s]\tbucket: %s\tregion: %s\n", awsErr.Code(), bucket, region)
 			}
 		}
 	} else {
+		checkWritable(&r, s)
 		resultChan <- r
+	}
+}
+
+/* checkWritable
+check if the bucket is writeable
+*/
+func checkWritable(r *Result, s *State) {
+	cmd := exec.Command("/usr/local/bin/aws", "s3", "cp", s.TestFileName, "s3://"+r.Name, "--region", r.Region)
+	cmd.Env = os.Environ()
+	_, err := cmd.Output()
+	if err == nil {
+		r.Writeable = true
 	}
 }
 
@@ -142,7 +160,7 @@ func discoverRegion(bucket string) string {
 			region = "eu-west-1"
 		}
 	}
-	fmt.Printf("* {discoverRegion} 'get bucket region' call successful with bucket: '%s' and region: '%s'\n", bucket, region)
+	//fmt.Printf("* {discoverRegion} 'get bucket region' call successful with bucket: '%s' and region: '%s'\n", bucket, region)
 	return region
 }
 
@@ -154,9 +172,11 @@ func parseArgs() *State {
 	s := new(State)
 	flag.IntVar(&s.Threads, "t", 100, "Number of concurrent threads")
 	flag.StringVar(&s.InputFileName, "i", "", "Path to input wordlist to enumerate")
+	flag.StringVar(&s.TestFileName, "f", "/tmp/test.file", "Path to a testfile")
 	flag.StringVar(&s.OutputFileName, "o", "", "Path to output file to store log")
 	flag.StringVar(&s.MutateFileName, "m", "", "Path to mutation wordlist (requires domain flag)")
 	flag.StringVar(&s.DomainName, "d", "", "Supplied domain name (used with mutation flag)")
+	flag.StringVar(&s.KeywordList, "k", "", "Keyword list (used with mutation flag)")
 	flag.Parse()
 	return s
 }
@@ -165,9 +185,18 @@ func parseArgs() *State {
 parse a result object and print it in a desired manner
 */
 func printResults(s *State, r *Result) {
-	fmt.Printf("Bucket: %s\tregion: %s\n\thas L/W: %t/%t\n", r.Name, r.Region, r.Listable, r.Writeable)
+	listable := color.RedString("False")
+	writeable := color.RedString("False")
+	if r.Listable {
+		listable = color.GreenString("True")
+	}
+	if r.Writeable {
+		writeable = color.GreenString("True")
+	}
+	fmt.Printf("Bucket: %s\n\tregion: %s\n\thas L/W: %s/%s\n", color.BlueString(r.Name), color.YellowString(r.Region), listable, writeable)
 	if s.OutputFile != nil {
-		s.OutputFile.WriteString(r.Name)
+		outputStr := fmt.Sprintf("%s,%s,%t,%t\n", r.Name, r.Region, r.Listable, r.Writeable)
+		s.OutputFile.WriteString(outputStr)
 	}
 }
 
@@ -198,6 +227,9 @@ func main() {
 	printerGroup := new(sync.WaitGroup)
 	printerGroup.Add(1)
 
+	/* count the number of input sources */
+	numInputSources := 0
+
 	scannerM, scannerW := bufio.NewScanner(nil), bufio.NewScanner(nil)
 
 	/* open the desired files */
@@ -211,6 +243,7 @@ func main() {
 		}
 		defer mutateList.Close()
 		scannerM = bufio.NewScanner(mutateList)
+		numInputSources++
 	}
 
 	if s.InputFileName != "" {
@@ -220,12 +253,17 @@ func main() {
 		}
 		defer wordlist.Close()
 		scannerW = bufio.NewScanner(wordlist)
+		numInputSources++
 	}
 
 	/* save time and just early exit */
 	if scannerM == nil && scannerW == nil {
 		panic("No wordlist and no mutationlist")
 	}
+
+	/* create waitgroup for the printer */
+	inputFileGroup := new(sync.WaitGroup)
+	inputFileGroup.Add(numInputSources)
 
 	/* create the output file if it didn't already exist */
 	if s.OutputFileName != "" {
@@ -237,6 +275,9 @@ func main() {
 			defer s.OutputFile.Close()
 		}
 	}
+
+	/* create the test file for writable check */
+	os.Create(s.TestFileName)
 
 	fmt.Printf("[*] Starting %d threads..\n", s.Threads)
 	/* create go-routines for all the threads */
@@ -251,6 +292,53 @@ func main() {
 		}()
 	}
 
+	/* store the input file contents in the inputChan */
+	if s.DomainName != "" {
+		go func() {
+			fmt.Println("[*] Creating wordList from mutation file..")
+			hostStr := strings.Split(s.DomainName, ".")[0]
+			stringList := strings.Split(s.KeywordList, " ")
+            if (s.KeywordList == "") {
+                stringList = []string{}
+            }
+			stringList = append(stringList, hostStr, s.DomainName)
+			for scannerM.Scan() {
+				word := strings.TrimSpace(scannerM.Text())
+				for _, keyword := range stringList {
+					/* perform mutation on domain and wordlist */
+					for _, sep := range separators {
+						inputChan <- (keyword + sep + word)
+						inputChan <- (word + sep + keyword)
+						s.Buckets = s.Buckets + 2
+					}
+				}
+			}
+			inputFileGroup.Done()
+		}()
+
+	}
+
+	/* just import the input list for testing */
+	if s.InputFileName != "" {
+		go func() {
+			fmt.Println("[*] Creating wordList from input file..")
+			for scannerW.Scan() {
+				word := strings.TrimSpace(scannerW.Text())
+				/* use static input wordlist */
+				if len(word) > 0 {
+					inputChan <- word
+					s.Buckets = s.Buckets + 1
+				}
+			}
+			inputFileGroup.Done()
+		}()
+	}
+
+	/* wait for the input files to finish loading before we print output */
+	inputFileGroup.Wait()
+
+	fmt.Println("[*] Waiting on threads to complete..\n")
+
 	/* create single go routine to keep printing results as they arrive */
 	go func() {
 		for r := range resultChan {
@@ -258,38 +346,6 @@ func main() {
 		}
 		printerGroup.Done()
 	}()
-
-	/* store the input file contents in the inputChan */
-	if s.DomainName != "" {
-		fmt.Println("[*] Creating wordList from mutation file..")
-		hostStr := strings.Split(s.DomainName, ".")[0]
-		for scannerM.Scan() {
-			word := strings.TrimSpace(scannerM.Text())
-			/* perform mutation on domain and wordlist */
-			for _, sep := range separators {
-				inputChan <- (s.DomainName + sep + word)
-				inputChan <- (word + sep + s.DomainName)
-				inputChan <- (hostStr + sep + word)
-				inputChan <- (word + sep + hostStr)
-				s.Buckets = s.Buckets + 4
-			}
-		}
-	}
-
-	/* just import the input list for testing */
-	if s.InputFileName != "" {
-		fmt.Println("[*] Creating wordList from input file..")
-		for scannerW.Scan() {
-			word := strings.TrimSpace(scannerW.Text())
-			/* use static input wordlist */
-			if len(word) > 0 {
-				inputChan <- word
-				s.Buckets = s.Buckets + 1
-			}
-		}
-	}
-
-	fmt.Println("[*] Waiting on threads to complete..")
 
 	close(inputChan)      /* we won't be adding more words */
 	processorGroup.Wait() /* wait for all threads to finish */
