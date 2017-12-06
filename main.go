@@ -27,22 +27,23 @@ type State struct {
 	DomainName     string   /* the name of the domain */
 	KeywordList    string   /* list of keywords */
 	Buckets        int      /* the number of buckets read */
+	AwsBin         string   /* location of aws cli binary */
 }
 
 /* state of bucket test return */
 type Result struct {
-	Name      string /* bucket name */
-	Region    string /* the bucket region */
-	Status    bool   /* was there an error? */
-	Listable  bool   /* bucket listable status */
-	Writeable bool   /* bucket writeable status */
+	Name     string /* bucket name */
+	Region   string /* the bucket region */
+	Status   bool   /* was there an error? */
+	Listable bool   /* bucket listable status */
+	Writable bool   /* bucket writeable status */
 }
 
 /* list of all s3 regions */
 var regionList = []string{"us-east-2", "us-east-1", "us-west-1", "us-west-2",
 	"ca-central-1", "ap-south-1", "ap-northeast-2", "ap-southeast-1",
-	"ap-southeast-2", "ap-northeast-1", "eu-central-1", "eu-west-1",
-	"eu-west-2", "sa-east-1"}
+	"ap-southeast-2", "ap-northeast-1", "eu-central-1", "eu-west-1", "eu-west-2",
+	"sa-east-1"}
 
 /* define separators for mutation */
 var separators = []string{".", "-", "_", ""}
@@ -64,11 +65,11 @@ func checkBucket(s *State, bucket string, resultChan chan<- Result, region strin
 
 	/* init the result struct */
 	r := Result{
-		Name:      bucket,
-		Region:    region,
-		Status:    (err == nil),
-		Listable:  true,
-		Writeable: false,
+		Name:     bucket,
+		Region:   region,
+		Status:   err == nil,
+		Listable: true,
+		Writable: false,
 	}
 
 	/* handle the return code if we couldn't list the bucket */
@@ -76,17 +77,23 @@ func checkBucket(s *State, bucket string, resultChan chan<- Result, region strin
 		if awsErr, ok := err.(awserr.Error); ok {
 			switch awsErr.Code() {
 			case "NoSuchBucket":
+				/* this isn't an existing bucket */
 				return
 			case "BucketRegionError":
+				/* default region didn't fit - let's find the actual one */
 				foundRegion := discoverRegion(bucket)
 				if foundRegion != "no_region_found" {
+					/* perform proper checks with actual region */
 					checkBucket(s, bucket, resultChan, foundRegion)
 				} else {
+					/* interesting edge case */
 					fmt.Printf("* {checkBucket} got 'no_region_found' on bucket %s\n", bucket)
 				}
-				/* case "RequestLimitExceeded":
-				   fmt.Println("rate limit exceeded")*/
+			case "RequestLimitExceeded":
+				/* sending too many requests */
+				fmt.Println("rate limit exceeded! consider reducing threads")
 			case "AccessDenied":
+				/* bucket exists but cannot be listed */
 				r.Listable = false
 				checkWritable(&r, s)
 				resultChan <- r
@@ -95,6 +102,7 @@ func checkBucket(s *State, bucket string, resultChan chan<- Result, region strin
 			}
 		}
 	} else {
+		/* bucket exists and is listable */
 		checkWritable(&r, s)
 		resultChan <- r
 	}
@@ -102,13 +110,14 @@ func checkBucket(s *State, bucket string, resultChan chan<- Result, region strin
 
 /* checkWritable
 check if the bucket is writeable
+I know this is bad.. still a work in progress 
 */
 func checkWritable(r *Result, s *State) {
-	cmd := exec.Command("/usr/local/bin/aws", "s3", "cp", s.TestFileName, "s3://"+r.Name, "--region", r.Region)
+	cmd := exec.Command(s.AwsBin, "s3", "cp", s.TestFileName, "s3://"+r.Name, "--region", r.Region)
 	cmd.Env = os.Environ()
 	_, err := cmd.Output()
 	if err == nil {
-		r.Writeable = true
+		r.Writable = true
 	}
 }
 
@@ -160,7 +169,7 @@ func discoverRegion(bucket string) string {
 			region = "eu-west-1"
 		}
 	}
-	//fmt.Printf("* {discoverRegion} 'get bucket region' call successful with bucket: '%s' and region: '%s'\n", bucket, region)
+	fmt.Printf("* {discoverRegion} 'get bucket region' call successful with bucket: '%s' and region: '%s'\n", bucket, region)
 	return region
 }
 
@@ -190,12 +199,12 @@ func printResults(s *State, r *Result) {
 	if r.Listable {
 		listable = color.GreenString("True")
 	}
-	if r.Writeable {
+	if r.Writable {
 		writeable = color.GreenString("True")
 	}
 	fmt.Printf("Bucket: %s\n\tregion: %s\n\thas L/W: %s/%s\n", color.BlueString(r.Name), color.YellowString(r.Region), listable, writeable)
 	if s.OutputFile != nil {
-		outputStr := fmt.Sprintf("%s,%s,%t,%t\n", r.Name, r.Region, r.Listable, r.Writeable)
+		outputStr := fmt.Sprintf("%s,%s,%t,%t\n", r.Name, r.Region, r.Listable, r.Writable)
 		s.OutputFile.WriteString(outputStr)
 	}
 }
@@ -212,12 +221,20 @@ func main() {
 		panic("issue parsing args")
 	}
 
+	/* find location of aws cli */
+	out, err := exec.Command("which", "aws").Output()
+	fmt.Printf("%s", out)
+	if err != nil {
+		panic("cannot find aws cli")
+	}
+	s.AwsBin = string(out)
+
 	/* get starting time */
 	start := time.Now()
 
-	/* word channel to store words for bucket checking */
+	/* channel to store bucket permutations */
 	inputChan := make(chan string, s.Threads)
-	/* result channel to store output of bucket test function */
+	/* resulting check channel */
 	resultChan := make(chan Result)
 
 	/* create waitgroups for the threads */
@@ -298,24 +315,23 @@ func main() {
 			fmt.Println("[*] Creating wordList from mutation file..")
 			hostStr := strings.Split(s.DomainName, ".")[0]
 			stringList := strings.Split(s.KeywordList, " ")
-            if (s.KeywordList == "") {
-                stringList = []string{}
-            }
+			if s.KeywordList == "" {
+				stringList = []string{}
+			}
 			stringList = append(stringList, hostStr, s.DomainName)
 			for scannerM.Scan() {
 				word := strings.TrimSpace(scannerM.Text())
 				for _, keyword := range stringList {
 					/* perform mutation on domain and wordlist */
 					for _, sep := range separators {
-						inputChan <- (keyword + sep + word)
-						inputChan <- (word + sep + keyword)
+						inputChan <- keyword + sep + word
+						inputChan <- word + sep + keyword
 						s.Buckets = s.Buckets + 2
 					}
 				}
 			}
 			inputFileGroup.Done()
 		}()
-
 	}
 
 	/* just import the input list for testing */
