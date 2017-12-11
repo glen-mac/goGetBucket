@@ -223,18 +223,17 @@ func main() {
 
 	/* find location of aws cli */
 	out, err := exec.Command("which", "aws").Output()
-	fmt.Printf("%s", out)
+	s.AwsBin = string(out)
 	if err != nil {
 		panic("cannot find aws cli")
 	}
-	s.AwsBin = string(out)
 
 	/* get starting time */
 	start := time.Now()
 
 	/* channel to store bucket permutations */
 	inputChan := make(chan string, s.Threads)
-	/* resulting check channel */
+	/* channel to store bucket check results */
 	resultChan := make(chan Result)
 
 	/* create waitgroups for the threads */
@@ -251,6 +250,7 @@ func main() {
 
 	/* open the desired files */
 	if s.DomainName != "" {
+		fmt.Println(s.DomainName)
 		if s.MutateFileName == "" {
 			panic("Domain provided but mutation file was not")
 		}
@@ -296,7 +296,7 @@ func main() {
 	/* create the test file for writable check */
 	os.Create(s.TestFileName)
 
-	fmt.Printf("[*] Starting %d threads..\n", s.Threads)
+	fmt.Printf("[*] Starting %d checking threads..\n", s.Threads)
 	/* create go-routines for all the threads */
 	for i := 0; i < s.Threads; i++ {
 		go func() {
@@ -353,7 +353,7 @@ func main() {
 	/* wait for the input files to finish loading before we print output */
 	inputFileGroup.Wait()
 
-	fmt.Println("[*] Waiting on threads to complete..\n")
+	fmt.Println("[*] Waiting on permutator threads to complete..\n")
 
 	/* create single go routine to keep printing results as they arrive */
 	go func() {
@@ -364,7 +364,7 @@ func main() {
 	}()
 
 	close(inputChan)      /* we won't be adding more words */
-	processorGroup.Wait() /* wait for all threads to finish */
+	processorGroup.Wait() /* wait for all permutation threads to finish */
 	close(resultChan)     /* close the results chan input */
 	printerGroup.Wait()   /* wait until results have all printed */
 
