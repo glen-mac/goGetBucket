@@ -8,11 +8,12 @@ The following information about every bucket found to exist will be returned:
 - List Permission
 - Write Permission
 - Region the Bucket exists in
+- If the bucket has all access disabled
 
 # Installation
 
-```
-https://github.com/glen-mac/goGetBucket.git
+```bash
+git clone https://github.com/glen-mac/goGetBucket.git
 cd goGetBucket
 go get
 go build
