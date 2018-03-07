@@ -12,11 +12,8 @@ The following information about every bucket found to exist will be returned:
 
 # Installation
 
-```bash
-git clone https://github.com/glen-mac/goGetBucket.git
-cd goGetBucket
-go get
-go build
+```
+go get -u github.com/glen-mac/goGetBucket
 ```
 
 # Usage
