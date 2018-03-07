@@ -21,7 +21,7 @@ go build
 
 # Usage
 
-`./goGet -m ~/tools/altdns/words.txt -d <domain> -o <output> -i <wordlist>`
+`./goGetBucket -m ~/tools/altdns/words.txt -d <domain> -o <output> -i <wordlist>`
 
 
 ```
