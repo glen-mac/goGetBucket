@@ -7,6 +7,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/fatih/color"
 	"os"
@@ -21,6 +22,7 @@ type State struct {
 	InputFileName  string   /* the input wordlist */
 	OutputFileName string   /* the output file name */
 	OutputFile     *os.File /* the output file handler */
+	WriteTestFile  *os.File /* the writable test file handler */
 	Threads        int      /* the number of threads to use */
 	MutateFileName string   /* the mutation file name */
 	TestFileName   string   /* the test file to upload */
@@ -110,12 +112,20 @@ func checkBucket(s *State, bucket string, resultChan chan<- Result, region strin
 
 /* checkWritable
 check if the bucket is writeable
-I know this is bad.. still a work in progress 
 */
 func checkWritable(r *Result, s *State) {
-	cmd := exec.Command(s.AwsBin, "s3", "cp", s.TestFileName, "s3://"+r.Name, "--region", r.Region)
-	cmd.Env = os.Environ()
-	_, err := cmd.Output()
+
+	/* setup session */
+	conf := aws.Config{Region: aws.String(r.Region)}
+	sess := session.New(&conf)
+	svc := s3manager.NewUploader(sess)
+
+	/* perform upload */
+	_, err := svc.Upload(&s3manager.UploadInput{
+		Bucket: aws.String(r.Name),
+		Key:    aws.String("testfile"),
+		Body:   s.WriteTestFile,
+	})
 	if err == nil {
 		r.Writable = true
 	}
