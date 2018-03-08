@@ -54,13 +54,13 @@ The keyword list (`-k`) is concatenated with the root domain name (`-d`) and the
 
 Be sure not to increase the threads too high (`-t`) - as the AWS has API rate limiting that will kick in and start giving an undesired return code.
 
-# Screenshots
+# Screenshot
 
 <img src="https://i.imgur.com/ZeM5tzV.png">
 
 # To-Do
 
 - Write better GoLang
-- Not use the AWS cli tool to perform write access checking
 - Use net/http instead of the aws service libraries for go
 - Optimize the region checking
+- Optimize use of channels / passed structs
