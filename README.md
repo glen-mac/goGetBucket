@@ -1,5 +1,7 @@
 # goGetBucket - AWS S3 Bucket discovery through alterations and permutations
 
+> Warning: code is horrible as I have only used this for personal use. When I get the time I will make it less-horrible (and faster).
+
 When performing a recon on a domain - understanding assets they own is very important. AWS S3 bucket permissions have been confused time and time again, and have allowed for the exposure of sensitive material.
 
 What this tool does, is enumerate S3 bucket names using common patterns I have identified during my time bug hunting and pentesting. Permutations are supported on a root domain name using a custom wordlist. I highly recommend the one packaged within [AltDNS](https://github.com/infosec-au/altdns).
