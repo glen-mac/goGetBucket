@@ -20,7 +20,7 @@ go get -u github.com/glen-mac/goGetBucket
 
 # Usage
 
-`./goGetBucket -m ~/tools/altdns/words.txt -d <domain> -o <output> -i <wordlist>`
+`goGetBucket -m ~/tools/altdns/words.txt -d <domain> -o <output> -i <wordlist>`
 
 
 ```
@@ -41,7 +41,7 @@ Usage of ./goGetBucket:
         Number of concurrent threads (default 100)
 ```
 
-Throughout my use of the tool, I have produced the best results when I feed in a list of subdomains for a root domain I am interested in. E.G:
+Throughout my use of the tool, I have produced the best results when I feed in a list (`-i`) of subdomains for a root domain I am interested in. E.G:
 ```
 www.domain.com
 mail.domain.com
