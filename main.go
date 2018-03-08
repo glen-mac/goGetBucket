@@ -11,7 +11,6 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/fatih/color"
 	"os"
-	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -43,9 +42,9 @@ type Result struct {
 
 /* list of all s3 regions */
 var regionList = []string{"us-east-2", "us-east-1", "us-west-1", "us-west-2",
-	"ca-central-1", "ap-south-1", "ap-northeast-2", "ap-southeast-1",
-	"ap-southeast-2", "ap-northeast-1", "eu-central-1", "eu-west-1", "eu-west-2",
-	"sa-east-1"}
+"ca-central-1", "ap-south-1", "ap-northeast-2", "ap-southeast-1",
+"ap-southeast-2", "ap-northeast-1", "eu-central-1", "eu-west-1", "eu-west-2",
+"sa-east-1"}
 
 /* define separators for mutation */
 var separators = []string{".", "-", "_", ""}
@@ -231,12 +230,13 @@ func main() {
 		panic("issue parsing args")
 	}
 
-	/* find location of aws cli */
-	out, err := exec.Command("which", "aws").Output()
-	s.AwsBin = string(out)
+	/* open the test file for write permissions checking */
+	testFile, err := os.Open(s.TestFileName)
 	if err != nil {
-		panic("cannot find aws cli")
-	}
+		panic("Failed to open write permissions test file")
+	} 
+	s.WriteTestFile = testFile
+	defer testFile.Close()
 
 	/* get starting time */
 	start := time.Now()
@@ -297,10 +297,9 @@ func main() {
 		outputFile, err := os.Create(s.OutputFileName)
 		if err != nil {
 			panic("Unable to write to output file")
-		} else {
-			s.OutputFile = outputFile
-			defer s.OutputFile.Close()
-		}
+		} 
+		s.OutputFile = outputFile
+		defer outputFile.Close()
 	}
 
 	/* create the test file for writable check */
