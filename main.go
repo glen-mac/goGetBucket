@@ -7,8 +7,8 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"github.com/fatih/color"
 	"os"
 	"strings"
@@ -41,13 +41,14 @@ type Result struct {
 }
 
 /* list of all s3 regions */
-var regionList = []string{"us-east-2", "us-east-1", "us-west-1", "us-west-2",
-"ca-central-1", "ap-south-1", "ap-northeast-2", "ap-southeast-1",
-"ap-southeast-2", "ap-northeast-1", "eu-central-1", "eu-west-1", "eu-west-2",
-"sa-east-1"}
+var regionList = []string{
+	"us-east-2", "us-east-1", "us-west-1", "us-west-2",
+	"ca-central-1", "ap-south-1", "ap-northeast-2", "ap-southeast-1",
+	"ap-southeast-2", "ap-northeast-1", "eu-central-1", "eu-west-1", "eu-west-2",
+	"sa-east-1"}
 
 /* define separators for mutation */
-var separators = []string{".", "-", "_", ""}
+var separators = []string{".", "-", ""}
 
 /*  checkBucket
 check if a bucket with a certain name exists
@@ -234,7 +235,7 @@ func main() {
 	testFile, err := os.Open(s.TestFileName)
 	if err != nil {
 		panic("Failed to open write permissions test file")
-	} 
+	}
 	s.WriteTestFile = testFile
 	defer testFile.Close()
 
@@ -297,7 +298,7 @@ func main() {
 		outputFile, err := os.Create(s.OutputFileName)
 		if err != nil {
 			panic("Unable to write to output file")
-		} 
+		}
 		s.OutputFile = outputFile
 		defer outputFile.Close()
 	}
