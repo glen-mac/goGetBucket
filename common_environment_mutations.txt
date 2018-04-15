@@ -1,0 +1,9 @@
+backup
+dev
+development
+stage
+s3
+staging
+prod
+production
+test

@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"github.com/fatih/color"
+	"io/ioutil"
 	"os"
 	"strings"
 	"sync"
@@ -24,7 +25,6 @@ type State struct {
 	WriteTestFile  *os.File /* the writable test file handler */
 	Threads        int      /* the number of threads to use */
 	MutateFileName string   /* the mutation file name */
-	TestFileName   string   /* the test file to upload */
 	DomainName     string   /* the name of the domain */
 	KeywordList    string   /* list of keywords */
 	Buckets        int      /* the number of buckets read */
@@ -34,7 +34,7 @@ type State struct {
 /* state of bucket test return */
 type Result struct {
 	Name     string /* bucket name */
-	Region   string /* the bucket region */
+	Region   string /* bucket region */
 	Status   bool   /* was there an error? */
 	Listable bool   /* bucket listable status */
 	Writable bool   /* bucket writeable status */
@@ -54,14 +54,13 @@ var separators = []string{".", "-", ""}
 check if a bucket with a certain name exists
 */
 func checkBucket(s *State, bucket string, resultChan chan<- Result, region string) {
-
 	/* create the s3 session object */
 	s3svc := s3.New(session.New(), aws.NewConfig().WithRegion(region))
 
 	/* check if the bucket exists at all */
 	lor := &s3.ListObjectsInput{
 		Bucket:  aws.String(bucket),
-		MaxKeys: aws.Int64(0),
+		MaxKeys: aws.Int64(2),
 	}
 	_, err := s3svc.ListObjects(lor)
 
@@ -87,10 +86,10 @@ func checkBucket(s *State, bucket string, resultChan chan<- Result, region strin
 				if foundRegion != "no_region_found" {
 					/* perform proper checks with actual region */
 					checkBucket(s, bucket, resultChan, foundRegion)
-				} else {
-					/* interesting edge case */
-					fmt.Printf("* {checkBucket} got 'no_region_found' on bucket %s\n", bucket)
-				}
+				} // else {
+				//	/* interesting edge case */
+				//	fmt.Printf("* {checkBucket} got 'no_region_found' on bucket %s\n", bucket)
+				//}
 			case "RequestLimitExceeded":
 				/* sending too many requests */
 				fmt.Println("rate limit exceeded! consider reducing threads")
@@ -100,7 +99,7 @@ func checkBucket(s *State, bucket string, resultChan chan<- Result, region strin
 				checkWritable(&r, s)
 				resultChan <- r
 			default:
-				fmt.Printf("[%s]\tbucket: %s\tregion: %s\n", awsErr.Code(), bucket, region)
+				//fmt.Printf("[%s]\tbucket: %s\tregion: %s\n", awsErr.Code(), bucket, region)
 			}
 		}
 	} else {
@@ -123,7 +122,7 @@ func checkWritable(r *Result, s *State) {
 	/* perform upload */
 	_, err := svc.Upload(&s3manager.UploadInput{
 		Bucket: aws.String(r.Name),
-		Key:    aws.String("testfile"),
+		Key:    aws.String("akoxo0oL8vohFee7"),
 		Body:   s.WriteTestFile,
 	})
 	if err == nil {
@@ -162,7 +161,7 @@ func discoverRegion(bucket string) string {
 			}
 			return "no_region_found"
 		} else {
-			fmt.Printf("* {discoverRegion} [%s] (weird error) bucket: '%s'\n", awsErr.Code(), bucket)
+			//fmt.Printf("* {discoverRegion} [%s] (weird error) bucket: '%s'\n", awsErr.Code(), bucket)
 			return "no_region_found"
 		}
 	}
@@ -179,7 +178,7 @@ func discoverRegion(bucket string) string {
 			region = "eu-west-1"
 		}
 	}
-	fmt.Printf("* {discoverRegion} 'get bucket region' call successful with bucket: '%s' and region: '%s'\n", bucket, region)
+	//fmt.Printf("* {discoverRegion} 'get bucket region' call successful with bucket: '%s' and region: '%s'\n", bucket, region)
 	return region
 }
 
@@ -191,7 +190,6 @@ func parseArgs() *State {
 	s := new(State)
 	flag.IntVar(&s.Threads, "t", 100, "Number of concurrent threads")
 	flag.StringVar(&s.InputFileName, "i", "", "Path to input wordlist to enumerate")
-	flag.StringVar(&s.TestFileName, "f", "/tmp/test.file", "Path to a testfile")
 	flag.StringVar(&s.OutputFileName, "o", "", "Path to output file to store log")
 	flag.StringVar(&s.MutateFileName, "m", "", "Path to mutation wordlist (requires domain flag)")
 	flag.StringVar(&s.DomainName, "d", "", "Supplied domain name (used with mutation flag)")
@@ -204,15 +202,15 @@ func parseArgs() *State {
 parse a result object and print it in a desired manner
 */
 func printResults(s *State, r *Result) {
-	listable := color.RedString("False")
-	writeable := color.RedString("False")
+	listable := color.RedString("R")
+	writeable := color.RedString("W")
 	if r.Listable {
-		listable = color.GreenString("True")
+		listable = color.GreenString("R")
 	}
 	if r.Writable {
-		writeable = color.GreenString("True")
+		writeable = color.GreenString("W")
 	}
-	fmt.Printf("Bucket: %s\n\tregion: %s\n\thas L/W: %s/%s\n", color.BlueString(r.Name), color.YellowString(r.Region), listable, writeable)
+	fmt.Printf("Bucket: %s/%s %s\n", listable, writeable, color.BlueString(r.Name))
 	if s.OutputFile != nil {
 		outputStr := fmt.Sprintf("%s,%s,%t,%t\n", r.Name, r.Region, r.Listable, r.Writable)
 		s.OutputFile.WriteString(outputStr)
@@ -232,12 +230,13 @@ func main() {
 	}
 
 	/* open the test file for write permissions checking */
-	testFile, err := os.Open(s.TestFileName)
+	testFile, err := ioutil.TempFile("", "goGetBucket")
 	if err != nil {
 		panic("Failed to open write permissions test file")
 	}
 	s.WriteTestFile = testFile
 	defer testFile.Close()
+	defer os.Remove(testFile.Name())
 
 	/* get starting time */
 	start := time.Now()
@@ -250,6 +249,7 @@ func main() {
 	/* create waitgroups for the threads */
 	processorGroup := new(sync.WaitGroup)
 	processorGroup.Add(s.Threads)
+
 	/* create waitgroup for the printer */
 	printerGroup := new(sync.WaitGroup)
 	printerGroup.Add(1)
@@ -261,7 +261,6 @@ func main() {
 
 	/* open the desired files */
 	if s.DomainName != "" {
-		fmt.Println(s.DomainName)
 		if s.MutateFileName == "" {
 			panic("Domain provided but mutation file was not")
 		}
@@ -303,9 +302,6 @@ func main() {
 		defer outputFile.Close()
 	}
 
-	/* create the test file for writable check */
-	os.Create(s.TestFileName)
-
 	fmt.Printf("[*] Starting %d checking threads..\n", s.Threads)
 	/* create go-routines for all the threads */
 	for i := 0; i < s.Threads; i++ {
@@ -328,15 +324,34 @@ func main() {
 			if s.KeywordList == "" {
 				stringList = []string{}
 			}
-			stringList = append(stringList, hostStr, s.DomainName)
+
+			inputChan <- hostStr
+			inputChan <- s.DomainName
+			s.Buckets = s.Buckets + 2
+
 			for scannerM.Scan() {
 				word := strings.TrimSpace(scannerM.Text())
-				for _, keyword := range stringList {
-					/* perform mutation on domain and wordlist */
-					for _, sep := range separators {
-						inputChan <- keyword + sep + word
-						inputChan <- word + sep + keyword
-						s.Buckets = s.Buckets + 2
+				for _, sep := range separators {
+					inputChan <- hostStr + sep + word
+					inputChan <- word + sep + hostStr
+					inputChan <- s.DomainName + sep + word
+					inputChan <- word + sep + s.DomainName
+					s.Buckets = s.Buckets + 4
+
+					for _, keyword := range stringList {
+						inputChan <- hostStr + sep + word + sep + keyword
+						inputChan <- hostStr + sep + keyword + sep + word
+						inputChan <- word + sep + hostStr + sep + keyword
+						inputChan <- word + sep + keyword + sep + hostStr
+						inputChan <- keyword + sep + hostStr + sep + word
+						inputChan <- keyword + sep + word + sep + hostStr
+						inputChan <- s.DomainName + sep + word + sep + keyword
+						inputChan <- s.DomainName + sep + keyword + sep + word
+						inputChan <- word + sep + s.DomainName + sep + keyword
+						inputChan <- word + sep + keyword + sep + s.DomainName
+						inputChan <- keyword + sep + s.DomainName + sep + word
+						inputChan <- keyword + sep + word + sep + s.DomainName
+						s.Buckets = s.Buckets + 12
 					}
 				}
 			}
