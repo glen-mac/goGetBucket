@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"github.com/fatih/color"
+	"github.com/satori/go.uuid"
 	"io/ioutil"
 	"os"
 	"strings"
@@ -122,7 +123,7 @@ func checkWritable(r *Result, s *State) {
 	/* perform upload */
 	_, err := svc.Upload(&s3manager.UploadInput{
 		Bucket: aws.String(r.Name),
-		Key:    aws.String("akoxo0oL8vohFee7"),
+		Key:    aws.String(uuid.Must(uuid.NewV4()).String()),
 		Body:   s.WriteTestFile,
 	})
 	if err == nil {
