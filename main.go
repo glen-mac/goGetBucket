@@ -12,6 +12,7 @@ import (
 	"github.com/fatih/color"
 	"github.com/satori/go.uuid"
 	"io/ioutil"
+	"net/http"
 	"os"
 	"strings"
 	"sync"
@@ -41,20 +42,93 @@ type Result struct {
 	Writable bool   /* bucket writeable status */
 }
 
-/* list of all s3 regions */
-var regionList = []string{
+var regionListAWS = []string{
 	"us-east-2", "us-east-1", "us-west-1", "us-west-2",
 	"ca-central-1", "ap-south-1", "ap-northeast-2", "ap-southeast-1",
 	"ap-southeast-2", "ap-northeast-1", "eu-central-1", "eu-west-1", "eu-west-2",
 	"sa-east-1"}
 
-/* define separators for mutation */
 var separators = []string{".", "-", ""}
 
-/*  checkBucket
-check if a bucket with a certain name exists
+/*
+check if a bucket with a certain name exists using Go HTTP routines.
+most of this code is taken from https://github.com/bbb31/slurp
+because i'm not a go coder at all.
+
+this is useful to reduce api calls to aws, while still trying our luck
+for forbidden buckets when necessary. in fact, many buckets will have
+read access on auth sessions, while denying it to public http clients.
 */
-func checkBucket(s *State, bucket string, resultChan chan<- Result, region string) {
+func checkBucketHTTP(s *State, bucket string, resultChan chan<- Result) {
+
+	tr := &http.Transport{
+		IdleConnTimeout:       3 * time.Second,
+		ResponseHeaderTimeout: 3 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
+
+	client := &http.Client{
+		Transport: tr,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+
+	redirect := false
+	req, err := http.NewRequest("GET", "http://s3-1-w.amazonaws.com", nil)
+	req.Host = bucket + ".s3.amazonaws.com"
+
+	// don't look at me like that
+perform_request:
+	resp, err := client.Do(req)
+	defer resp.Body.Close()
+
+	r := Result{
+		Name:     bucket,
+		Region:   "",
+		Status:   err == nil,
+		Listable: true,
+		Writable: false,
+	}
+
+	switch resp.StatusCode {
+	// bucket exists and is listable, check writing permissions
+	case 200:
+		r.Region = discoverRegion(bucket)
+		checkWritableAWS(&r, s)
+		resultChan <- r
+
+	// bucket is somewhere else, follow the redirect
+	case 307:
+		if redirect == true {
+			// don't get caught in a loop...
+			return
+		}
+		loc := resp.Header.Get("Location")
+		req, err = http.NewRequest("GET", loc, nil)
+		// we all have our dirty secrets, don't look at me like that
+		redirect = true
+		goto perform_request
+
+	// bucket exists and is not listable: try again with an auth session
+	case 403:
+		checkBucketAWS(s, bucket, resultChan, "us-west-2")
+
+	// bucket does not exist
+	case 404:
+		return
+
+	// rate limit exceeded
+	case 503:
+		fmt.Println("rate limit exceeded! consider reducing threads")
+	}
+
+}
+
+/*
+check if a bucket with a certain name exists using the aws s3 sdk routines
+*/
+func checkBucketAWS(s *State, bucket string, resultChan chan<- Result, region string) {
 	/* create the s3 session object */
 	s3svc := s3.New(session.New(), aws.NewConfig().WithRegion(region))
 
@@ -79,41 +153,31 @@ func checkBucket(s *State, bucket string, resultChan chan<- Result, region strin
 		if awsErr, ok := err.(awserr.Error); ok {
 			switch awsErr.Code() {
 			case "NoSuchBucket":
-				/* this isn't an existing bucket */
 				return
 			case "BucketRegionError":
-				/* default region didn't fit - let's find the actual one */
 				foundRegion := discoverRegion(bucket)
 				if foundRegion != "no_region_found" {
-					/* perform proper checks with actual region */
-					checkBucket(s, bucket, resultChan, foundRegion)
-				} // else {
-				//	/* interesting edge case */
-				//	fmt.Printf("* {checkBucket} got 'no_region_found' on bucket %s\n", bucket)
-				//}
+					checkBucketAWS(s, bucket, resultChan, foundRegion)
+				}
 			case "RequestLimitExceeded":
-				/* sending too many requests */
 				fmt.Println("rate limit exceeded! consider reducing threads")
 			case "AccessDenied":
-				/* bucket exists but cannot be listed */
 				r.Listable = false
-				checkWritable(&r, s)
+				checkWritableAWS(&r, s)
 				resultChan <- r
-			default:
-				//fmt.Printf("[%s]\tbucket: %s\tregion: %s\n", awsErr.Code(), bucket, region)
 			}
 		}
 	} else {
 		/* bucket exists and is listable */
-		checkWritable(&r, s)
+		checkWritableAWS(&r, s)
 		resultChan <- r
 	}
 }
 
-/* checkWritable
-check if the bucket is writeable
+/*
+check if the bucket is writeable using the AWS S3 SDK routines
 */
-func checkWritable(r *Result, s *State) {
+func checkWritableAWS(r *Result, s *State) {
 
 	/* setup session */
 	conf := aws.Config{Region: aws.String(r.Region)}
@@ -131,7 +195,7 @@ func checkWritable(r *Result, s *State) {
 	}
 }
 
-/* discoverRegion
+/*
 the point of this function is to find the region in which this bucket belongs
 */
 func discoverRegion(bucket string) string {
@@ -152,8 +216,7 @@ func discoverRegion(bucket string) string {
 				Bucket:  aws.String(bucket),
 				MaxKeys: aws.Int64(0),
 			}
-			for _, region := range regionList {
-				//fmt.Printf("bruteforce for bucket %s with region %s\n", bucket, region)
+			for _, region := range regionListAWS {
 				s3svc = s3.New(session.New(), aws.NewConfig().WithRegion(region))
 				_, err := s3svc.ListObjects(lor)
 				if err == nil || err.(awserr.Error).Code() == "AccessDenied" {
@@ -162,7 +225,6 @@ func discoverRegion(bucket string) string {
 			}
 			return "no_region_found"
 		} else {
-			//fmt.Printf("* {discoverRegion} [%s] (weird error) bucket: '%s'\n", awsErr.Code(), bucket)
 			return "no_region_found"
 		}
 	}
@@ -179,13 +241,11 @@ func discoverRegion(bucket string) string {
 			region = "eu-west-1"
 		}
 	}
-	//fmt.Printf("* {discoverRegion} 'get bucket region' call successful with bucket: '%s' and region: '%s'\n", bucket, region)
 	return region
 }
 
-/*  parseArgs
-parse the command line arguments and store the state to use throughout
-the program usage
+/*
+parse the command line arguments and store the state to use throughout program usage
 */
 func parseArgs() *State {
 	s := new(State)
@@ -199,7 +259,7 @@ func parseArgs() *State {
 	return s
 }
 
-/* printResults
+/*
 parse a result object and print it in a desired manner
 */
 func printResults(s *State, r *Result) {
@@ -218,7 +278,7 @@ func printResults(s *State, r *Result) {
 	}
 }
 
-/*  main
+/*
 init the state and begin the go routines
 */
 func main() {
@@ -309,7 +369,7 @@ func main() {
 		go func() {
 			for word := range inputChan {
 				/* process the bucket name with default region */
-				checkBucket(s, word, resultChan, "us-west-2")
+				checkBucketHTTP(s, word, resultChan)
 			}
 			/* tell WG that the thread has finished */
 			processorGroup.Done()
