@@ -42,11 +42,11 @@ type Result struct {
 	Writable bool   /* bucket writeable status */
 }
 
+var baseUrlAWS = []string{"http://s3-1-w.amazonaws.com", ".s3.amazonaws.com"}
 var regionListAWS = []string{
-	"us-east-2", "us-east-1", "us-west-1", "us-west-2",
-	"ca-central-1", "ap-south-1", "ap-northeast-2", "ap-southeast-1",
-	"ap-southeast-2", "ap-northeast-1", "eu-central-1", "eu-west-1", "eu-west-2",
-	"sa-east-1"}
+	"us-east-2", "us-east-1", "us-west-1", "us-west-2", "ca-central-1",
+	"ap-south-1", "ap-northeast-2", "ap-southeast-1", "ap-southeast-2",
+	"ap-northeast-1", "eu-central-1", "eu-west-1", "eu-west-2", "sa-east-1"}
 
 var separators = []string{".", "-", ""}
 
@@ -75,12 +75,22 @@ func checkBucketHTTP(s *State, bucket string, resultChan chan<- Result) {
 	}
 
 	redirect := false
-	req, err := http.NewRequest("GET", "http://s3-1-w.amazonaws.com", nil)
-	req.Host = bucket + ".s3.amazonaws.com"
+	// HEAD requests trigger a ratelimit, stick to GET
+	req, err := http.NewRequest("GET", baseUrlAWS[0], nil)
+
+	if err != nil {
+		return
+	}
+
+	req.Host = bucket + baseUrlAWS[1]
 
 	// don't look at me like that
 perform_request:
 	resp, err := client.Do(req)
+	if err != nil {
+		return
+	}
+
 	defer resp.Body.Close()
 
 	r := Result{
