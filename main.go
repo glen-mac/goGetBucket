@@ -61,7 +61,7 @@ func checkBucket(s *State, bucket string, resultChan chan<- Result, region strin
 	/* check if the bucket exists at all */
 	lor := &s3.ListObjectsInput{
 		Bucket:  aws.String(bucket),
-		MaxKeys: aws.Int64(2),
+		MaxKeys: aws.Int64(0),
 	}
 	_, err := s3svc.ListObjects(lor)
 
