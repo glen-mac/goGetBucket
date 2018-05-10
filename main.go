@@ -60,7 +60,6 @@ for forbidden buckets when necessary. in fact, many buckets will have
 read access on auth sessions, while denying it to public http clients.
 */
 func checkBucketHTTP(s *State, bucket string, resultChan chan<- Result) {
-
 	tr := &http.Transport{
 		IdleConnTimeout:       3 * time.Second,
 		ResponseHeaderTimeout: 3 * time.Second,
@@ -132,7 +131,6 @@ perform_request:
 	case 503:
 		fmt.Println("rate limit exceeded! consider reducing threads")
 	}
-
 }
 
 /*
@@ -188,7 +186,6 @@ func checkBucketAWS(s *State, bucket string, resultChan chan<- Result, region st
 check if the bucket is writeable using the AWS S3 SDK routines
 */
 func checkWritableAWS(r *Result, s *State) {
-
 	/* setup session */
 	conf := aws.Config{Region: aws.String(r.Region)}
 	sess := session.New(&conf)
@@ -209,7 +206,6 @@ func checkWritableAWS(r *Result, s *State) {
 the point of this function is to find the region in which this bucket belongs
 */
 func discoverRegion(bucket string) string {
-
 	/* create new session object with default region */
 	s3svc := s3.New(session.New(), aws.NewConfig().WithRegion("us-west-2"))
 
