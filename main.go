@@ -4,19 +4,20 @@ import (
 	"bufio"
 	"flag"
 	"fmt"
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/awserr"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/s3"
-	"github.com/aws/aws-sdk-go/service/s3/s3manager"
-	"github.com/fatih/color"
-	"github.com/satori/go.uuid"
 	"io/ioutil"
 	"net/http"
 	"os"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go/service/s3/s3manager"
+	"github.com/fatih/color"
+	uuid "github.com/google/uuid"
 )
 
 /* state of the system */
@@ -194,7 +195,7 @@ func checkWritableAWS(r *Result, s *State) {
 	/* perform upload */
 	_, err := svc.Upload(&s3manager.UploadInput{
 		Bucket: aws.String(r.Name),
-		Key:    aws.String(uuid.Must(uuid.NewV4()).String()),
+		Key:    aws.String(uuid.New().String()),
 		Body:   s.WriteTestFile,
 	})
 	if err == nil {
