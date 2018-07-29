@@ -4,26 +4,29 @@ import (
 	"bufio"
 	"flag"
 	"fmt"
+	"io/ioutil"
+	"log"
+	"net/http"
+	"os"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"github.com/fatih/color"
-	"github.com/satori/go.uuid"
-	"io/ioutil"
-	"net/http"
-	"os"
-	"strings"
-	"sync"
-	"time"
+	uuid "github.com/google/uuid"
+	"github.com/xtgo/set"
 )
 
 /* state of the system */
 type State struct {
 	InputFileName  string   /* the input wordlist */
 	OutputFileName string   /* the output file name */
-	OutputFile     *os.File /* the output file handler */
 	WriteTestFile  *os.File /* the writable test file handler */
 	Threads        int      /* the number of threads to use */
 	MutateFileName string   /* the mutation file name */
@@ -49,6 +52,7 @@ var regionListAWS = []string{
 	"ap-northeast-1", "eu-central-1", "eu-west-1", "eu-west-2", "sa-east-1"}
 
 var separators = []string{".", "-", ""}
+var outputStringArray []string
 
 /*
 check if a bucket with a certain name exists using Go HTTP routines.
@@ -194,7 +198,7 @@ func checkWritableAWS(r *Result, s *State) {
 	/* perform upload */
 	_, err := svc.Upload(&s3manager.UploadInput{
 		Bucket: aws.String(r.Name),
-		Key:    aws.String(uuid.Must(uuid.NewV4()).String()),
+		Key:    aws.String(uuid.New().String()),
 		Body:   s.WriteTestFile,
 	})
 	if err == nil {
@@ -278,10 +282,43 @@ func printResults(s *State, r *Result) {
 		writeable = color.GreenString("W")
 	}
 	fmt.Printf("Bucket: %s/%s %s\n", listable, writeable, color.BlueString(r.Name))
-	if s.OutputFile != nil {
-		outputStr := fmt.Sprintf("%s,%s,%t,%t\n", r.Name, r.Region, r.Listable, r.Writable)
-		s.OutputFile.WriteString(outputStr)
+
+	outputStr := fmt.Sprintf("%s,%s,%t,%t", r.Name, r.Region, r.Listable, r.Writable)
+	outputStringArray = append(outputStringArray, outputStr)
+
+}
+
+// readLines reads a whole file into memory
+// and returns a slice of its lines.
+func readLines(path string) ([]string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
 	}
+	defer file.Close()
+
+	var lines []string
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		lines = append(lines, scanner.Text())
+	}
+	return lines, scanner.Err()
+}
+
+// writeLines writes the lines to the given file.
+func writeLines(lines []string, path string) error {
+	file, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	w := bufio.NewWriter(file)
+	fmt.Fprintln(w, "Name,Region,Listable,Writable")
+	for _, line := range lines {
+		fmt.Fprintln(w, line)
+	}
+	return w.Flush()
 }
 
 /*
@@ -359,16 +396,6 @@ func main() {
 	inputFileGroup := new(sync.WaitGroup)
 	inputFileGroup.Add(numInputSources)
 
-	/* create the output file if it didn't already exist */
-	if s.OutputFileName != "" {
-		outputFile, err := os.Create(s.OutputFileName)
-		if err != nil {
-			panic("Unable to write to output file")
-		}
-		s.OutputFile = outputFile
-		defer outputFile.Close()
-	}
-
 	fmt.Printf("[*] Starting %d checking threads..\n", s.Threads)
 	/* create go-routines for all the threads */
 	for i := 0; i < s.Threads; i++ {
@@ -387,9 +414,18 @@ func main() {
 		go func() {
 			fmt.Println("[*] Creating wordList from mutation file..")
 			hostStr := strings.Split(s.DomainName, ".")[0]
-			stringList := strings.Split(s.KeywordList, " ")
-			if s.KeywordList == "" {
-				stringList = []string{}
+
+			var stringList []string
+
+			if s.KeywordList != "" {
+
+				keywords, err := readLines(s.KeywordList)
+				if err != nil {
+					log.Fatalf("keywords: %s", err)
+				}
+				for _, line := range keywords {
+					stringList = append(stringList, line)
+				}
 			}
 
 			inputChan <- hostStr
@@ -418,7 +454,15 @@ func main() {
 						inputChan <- word + sep + keyword + sep + s.DomainName
 						inputChan <- keyword + sep + s.DomainName + sep + word
 						inputChan <- keyword + sep + word + sep + s.DomainName
-						s.Buckets = s.Buckets + 12
+						inputChan <- hostStr + sep + word
+						inputChan <- hostStr + sep + keyword
+						inputChan <- word + sep + hostStr
+						inputChan <- keyword + sep + hostStr
+						inputChan <- s.DomainName + sep + word
+						inputChan <- s.DomainName + sep + keyword
+						inputChan <- word + sep + s.DomainName
+						inputChan <- keyword + sep + s.DomainName
+						s.Buckets = s.Buckets + 20
 					}
 				}
 			}
@@ -459,6 +503,17 @@ func main() {
 	processorGroup.Wait() /* wait for all permutation threads to finish */
 	close(resultChan)     /* close the results chan input */
 	printerGroup.Wait()   /* wait until results have all printed */
+
+	// need to sort the final output string before writing it to the file
+	sortedData := sort.StringSlice(outputStringArray)
+	sort.Sort(sortedData)
+	n := set.Uniq(sortedData) // Uniq returns the size of the set
+	sortedData = sortedData[:n]
+
+	err = writeLines(sortedData, s.OutputFileName)
+	if err != nil {
+		log.Fatalf("Cant write to the output file: %s", err)
+	}
 
 	/* print stats */
 	elapsed := time.Since(start)
