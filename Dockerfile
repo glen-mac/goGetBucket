@@ -19,7 +19,6 @@ FROM alpine:3.7
 LABEL maintainer="Anshuman Bhartiya"
 COPY --from=build-env /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=build-env /go/bin/gogetbucket /usr/bin/gogetbucket
-COPY common_bucket_names.txt ./
-COPY common_environment_mutations.txt ./
+COPY lists/ ./lists/
 
 ENTRYPOINT ["/usr/bin/gogetbucket"]
