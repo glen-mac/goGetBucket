@@ -2,3 +2,4 @@
 goGetBucket
 *.swp
 vendor/
+subdomains.txt
